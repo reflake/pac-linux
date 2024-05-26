@@ -1,19 +1,30 @@
-constexpr bool debug = false;
-
-#pragma region Global
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <ios>
+#include <stdexcept>
 
 #include <stdio.h>
-#include <Windows.h>
+#include <unistd.h>
+#include <filesystem>
 
+namespace fs = std::filesystem;
+
+#if NDEBUG
+constexpr bool debug = false;
+#else
+constexpr bool debug = true;
+#endif
 typedef unsigned char      uint8;
 typedef unsigned short     uint16;
-typedef unsigned long      uint32;
-typedef unsigned long long uint64;
+typedef unsigned int       uint32;
+typedef unsigned long      uint64;
 
 typedef unsigned char      byte8;
 typedef unsigned short     byte16;
-typedef unsigned long      byte32;
-typedef unsigned long long byte64;
+typedef unsigned int       byte32;
+typedef unsigned long      byte64;
 
 template <typename T>
 constexpr uint32 countof(T & var)
@@ -46,6 +57,18 @@ const char * signatureString[] =
 	"PNST",
 };
 
+static int lastError = 0;
+
+void SetLastError(int number) {
+
+	throw std::runtime_error("Error");
+}
+
+int GetLastError() {
+
+	return lastError;
+}
+
 template <typename T>
 void Align(T & pos, T boundary, byte8 * addr = 0, byte8 pad = 0)
 {
@@ -63,16 +86,14 @@ void Align(T & pos, T boundary, byte8 * addr = 0, byte8 pad = 0)
 
 byte8 * Alloc(uint32 size)
 {
+	// TODO: instead of exception return null and print error
 	byte8 * addr = 0;
 	byte32 error = 0;
 
-	SetLastError(0);
-	addr = (byte8 *)VirtualAlloc(0, size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-	error = GetLastError();
+	addr = reinterpret_cast<byte8*>(malloc(size));
 	if (!addr)
 	{
-		printf("VirtualAlloc failed. %X\n", error);
-		return 0;
+		throw std::runtime_error("Allocation failed");
 	}
 
 	return addr;
@@ -80,45 +101,38 @@ byte8 * Alloc(uint32 size)
 
 byte8 * LoadFile(const char * fileName, uint32 * size, byte8 * dest = 0)
 {
+	// TODO: instead of exception return null and print error
 	byte8 * addr = dest;
-	HANDLE file = 0;
-	BY_HANDLE_FILE_INFORMATION fi = {};
-	uint32 bytesRead = 0;
-	OVERLAPPED overlap = {};
-	byte32 error = 0;
 
-	SetLastError(0);
-	file = CreateFileA(fileName, GENERIC_READ, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-	error = GetLastError();
-	if (file == INVALID_HANDLE_VALUE)
+	std::ifstream file(fileName, std::ios::ate | std::ios::binary);
+
+	if (!file.is_open())
 	{
-		printf("CreateFile failed. %X\n", error);
-		return 0;
+		throw std::runtime_error("CreateFile failed");
 	}
 
-	GetFileInformationByHandle(file, &fi);
-	if (fi.nFileSizeLow == 0)
+	int fileSize = file.tellg();
+	if (fileSize == 0)
 	{
-		printf("File exists, but is empty.\n");
-		return 0;
+		throw std::runtime_error("File exists, but is empty");
 	}
 
 	if (!addr)
 	{
-		addr = Alloc(fi.nFileSizeLow);
+		addr = reinterpret_cast<byte8*>(malloc(fileSize));
 		if (!addr)
 		{
-			printf("Alloc failed.\n");
-			return 0;
+			throw std::runtime_error("Alloc failed");
 		}
 	}
 
-	ReadFile(file, addr, fi.nFileSizeLow, &bytesRead, &overlap);
-	CloseHandle(file);
+	file.seekg(std::ios::beg);
+	file.read(reinterpret_cast<char*>(addr), fileSize);
+	file.close();
 
 	if (size)
 	{
-		*size = fi.nFileSizeLow;
+		*size = fileSize;
 	}
 
 	return addr;
@@ -126,67 +140,41 @@ byte8 * LoadFile(const char * fileName, uint32 * size, byte8 * dest = 0)
 
 bool SaveFile(const char * fileName, byte8 * addr, uint32 size)
 {
-	HANDLE file = 0;
-	uint32 bytesWritten = 0;
-	OVERLAPPED overlap = {};
-	byte32 error = 0;
+	// TODO: instead of exception return false and print error
+	std::ofstream file(fileName, std::ios::binary);
 
-	SetLastError(0);
-	file = CreateFileA(fileName, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
-	error = GetLastError();
-	if (file == INVALID_HANDLE_VALUE)
+	if (!file.is_open())
 	{
-		printf("CreateFile failed. %X\n", error);
-		return false;
+		throw std::runtime_error("Failed to save. Couldn't create file");
 	}
 
-	WriteFile(file, addr, size, &bytesWritten, &overlap);
-	CloseHandle(file);
+	file.write(reinterpret_cast<char*>(addr), size);
+	file.close();
 
 	return true;
 }
 
 bool CreateEmptyFile(const char * fileName)
 {
-	HANDLE file = 0;
-	byte32 error = 0;
+	// TODO: instead of exception return false and print error
+	std::ofstream file(fileName);
 
-	SetLastError(0);
-	file = CreateFileA(fileName, GENERIC_WRITE, 0, 0, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, 0);
-	error = GetLastError();
-	if (file == INVALID_HANDLE_VALUE)
+	if (!file.is_open())
 	{
-		printf("CreateFile failed. %X\n", error);
-		return false;
+		throw std::runtime_error("Failed to create empty file");
 	}
 
-	CloseHandle(file);
+	file.close();
 
 	return true;
 }
 
 bool ChangeDirectory(const char * dest)
 {
-	bool result = false;
-	byte32 error = 0;
-
-	SetLastError(0);
-	result = (bool)SetCurrentDirectoryA(dest);
-	error = GetLastError();
-	if (!result)
+	if (chdir(dest) == 1)
 	{
-		printf("SetCurrentDirectory failed. %X\n", error);
+		printf("ChangeDirectory failed. %X\n", errno);
 		return false;
-	}
-
-	if constexpr (debug)
-	{
-		printf("Changed directory from %s to ", directory);
-	}
-	GetCurrentDirectoryA(sizeof(directory), directory);
-	if constexpr (debug)
-	{
-		printf("%s.\n", directory);
 	}
 
 	return true;
@@ -249,8 +237,7 @@ bool CheckArchive
 		return false;
 	}
 
-
-	CreateDirectoryA(directoryName, 0);
+	fs::create_directory(directoryName);
 	ChangeDirectory(directoryName);
 
 
@@ -374,33 +361,31 @@ byte8 * CreateArchive(uint32 * saveSize = 0)
 	auto & fileCount = *(uint32 *)(head + 4);
 	auto   fileOff   =  (uint32 *)(head + 8);
 
-	WIN32_FIND_DATAA fd;
-	HANDLE find;
+	fs::path current_path = fs::current_path();
+	bool foundAny = false;
 
-	find = FindFirstFileA("*", &fd);
-	if (find == INVALID_HANDLE_VALUE)
-	{
-		return 0;
-	}
+	for ( const auto& entry : fs::directory_iterator(current_path) ) {
 
-	do
-	{
-		if (strcmp(fd.cFileName, ".") == 0)
+		foundAny = true;
+
+		auto fileName = entry.path().c_str();
+
+		if (strcmp(fileName, ".") == 0)
 		{
 			continue;
 		}
-		if (strcmp(fd.cFileName, "..") == 0)
+		if (strcmp(fileName, "..") == 0)
 		{
 			continue;
 		}
-		if (strcmp(fd.cFileName, "PAC") == 0)
+		if (strcmp(fileName, "PAC") == 0)
 		{
 			head[0] = 'P';
 			head[1] = 'A';
 			head[2] = 'C';
 			continue;
 		}
-		if (strcmp(fd.cFileName, "PNST") == 0)
+		if (strcmp(fileName, "PNST") == 0)
 		{
 			head[0] = 'P';
 			head[1] = 'N';
@@ -408,9 +393,9 @@ byte8 * CreateArchive(uint32 * saveSize = 0)
 			head[3] = 'T';
 			continue;
 		}
-		if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) // @Todo: Add empty check.
+		if (entry.is_directory()) // @Todo: Add empty check.
 		{
-			ChangeDirectory(fd.cFileName);
+			ChangeDirectory(fileName);
 
 			byte8 * archive = 0;
 			uint32 archiveSize = 0;
@@ -436,7 +421,7 @@ byte8 * CreateArchive(uint32 * saveSize = 0)
 			dataPos += archiveSize;
 			Align<uint32>(dataPos, 0x10);
 
-			VirtualFree(archive, 0, MEM_RELEASE);
+			free(archive);
 
 			ChangeDirectory("..");
 			continue;
@@ -445,8 +430,7 @@ byte8 * CreateArchive(uint32 * saveSize = 0)
 		byte8 * file = 0;
 		uint32 fileSize = 0;
 
-		file = LoadFile(fd.cFileName, &fileSize);
-
+		file = LoadFile(fileName, &fileSize);
 		fileOff[fileCount] = 0xFFFFFFFF;
 
 		if (file)
@@ -462,12 +446,14 @@ byte8 * CreateArchive(uint32 * saveSize = 0)
 			dataPos += fileSize;
 			Align<uint32>(dataPos, 0x10);
 
-			VirtualFree(file, 0, MEM_RELEASE);
+			free(file);
 		}
 
 		fileCount++;
 	}
-	while (FindNextFileA(find, &fd));
+
+	if (!foundAny)
+		return 0;
 
 	// All files compiled.
 
@@ -505,8 +491,8 @@ byte8 * CreateArchive(uint32 * saveSize = 0)
 	archivePos += dataPos;
 	Align<uint32>(archivePos, 0x10);
 
-	VirtualFree(head, 0, MEM_RELEASE); // @Research: Why is size 0 correct again?
-	VirtualFree(data, 0, MEM_RELEASE);
+	free(head);
+	free(data);
 
 	if (saveSize)
 	{
@@ -535,7 +521,9 @@ void PrintHelp()
 
 int main(int argc, char ** argv)
 {
-	GetCurrentDirectoryA(sizeof(directory), directory);
+	fs::path current_path = fs::current_path();
+
+	strcpy(directory, current_path.c_str());
 
 	if (argc < 2)
 	{

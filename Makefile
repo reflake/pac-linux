@@ -9,7 +9,7 @@ BUILD_DIR = $(CONFIG)
 CXX = g++
 
 # Compiler flags
-CXXFLAGS = -Wextra -std=c++11
+CXXFLAGS = -Wextra -std=c++17
 
 ifeq "$(CONFIG)" "Debug"
 	CXXFLAGS += -g -Wall -O0
