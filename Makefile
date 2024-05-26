@@ -14,7 +14,7 @@ CXXFLAGS = -Wextra -std=c++17
 ifeq "$(CONFIG)" "Debug"
 	CXXFLAGS += -g -Wall -O0
 else
-	CXXFLAGS += -O2
+	CXXFLAGS += -O2 -DNDEBUG
 endif
 
 # Execution file target
