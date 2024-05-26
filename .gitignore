@@ -6,3 +6,5 @@
 *.bat
 *.vcxproj.user
 .vscode/settings.json
+Debug/
+Release/
