@@ -3,7 +3,10 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <iostream>
 #include <stdexcept>
+#include <vector>
+#include <algorithm>
 
 #include <stdio.h>
 #include <unistd.h>
@@ -114,7 +117,8 @@ byte8 * LoadFile(const char * fileName, uint32 * size, byte8 * dest = 0)
 	int fileSize = file.tellg();
 	if (fileSize == 0)
 	{
-		throw std::runtime_error("File exists, but is empty");
+		// throw std::runtime_error("File exists, but is empty");
+		return nullptr;
 	}
 
 	if (!addr)
@@ -138,10 +142,32 @@ byte8 * LoadFile(const char * fileName, uint32 * size, byte8 * dest = 0)
 	return addr;
 }
 
+bool SignatureMatch(byte8 * addr, const byte8 * signature, uint8 count)
+{
+	for (uint8 index = 0; index < count; index++)
+	{
+		if (addr[index] != signature[index])
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 bool SaveFile(const char * fileName, byte8 * addr, uint32 size)
 {
+	const char* MOD_SIGNATURE = "MOD ";
+
+	std::string newFileName(fileName);
+
+	if (size > 4 && SignatureMatch(addr, reinterpret_cast<const byte8 *>(MOD_SIGNATURE), 4))
+	{
+		// Model file??
+		newFileName.append(".mod");
+	}
+
 	// TODO: instead of exception return false and print error
-	std::ofstream file(fileName, std::ios::binary);
+	std::ofstream file(newFileName.c_str(), std::ios::binary);
 
 	if (!file.is_open())
 	{
@@ -180,18 +206,6 @@ bool ChangeDirectory(const char * dest)
 	return true;
 }
 
-bool SignatureMatch(byte8 * addr, byte8 * signature, uint8 count)
-{
-	for (uint8 index = 0; index < count; index++)
-	{
-		if (addr[index] != signature[index])
-		{
-			return false;
-		}
-	}
-	return true;
-}
-
 const char * CheckSignature(byte8 * addr)
 {
 	for (uint8 index = 0; index < (uint8)countof(signature); index++)
@@ -210,20 +224,23 @@ bool CheckArchive
 (
 	byte8 * archive,
 	uint32 archiveSize,
-	const char * directoryName
+	const char * directoryName,
+	bool nonRecursive
 );
 
 void ExtractFiles
 (
 	byte8 * archive,
-	uint32 archiveSize
+	uint32 archiveSize,
+	bool nonRecursive
 );
 
 bool CheckArchive
 (
 	byte8 * archive,
 	uint32 archiveSize,
-	const char * directoryName
+	const char * directoryName,
+	bool nonRecursive
 )
 {
 	if constexpr (debug)
@@ -248,7 +265,7 @@ bool CheckArchive
 		return false;
 	}
 
-	ExtractFiles(archive, archiveSize);
+	ExtractFiles(archive, archiveSize, nonRecursive);
 
 	ChangeDirectory("..");
 
@@ -258,7 +275,8 @@ bool CheckArchive
 void ExtractFiles
 (
 	byte8 * archive,
-	uint32 archiveSize
+	uint32 archiveSize,
+	bool nonRecursive
 )
 {
 	if constexpr (debug)
@@ -320,12 +338,24 @@ void ExtractFiles
 			printf("fileSize %u\n", fileSize);
 		}
 
-		if (CheckArchive(file, fileSize, dest))
+		if (!nonRecursive && CheckArchive(file, fileSize, dest, nonRecursive))
 		{
 			continue;
 		}
 
 		SaveFile(dest, file, fileSize);
+	}
+}
+
+int ExtractFileIndex(const fs::path& fileName) {
+
+	std::string fileStem = fileName.stem().string();
+
+	try {
+		return std::stoi( fileStem );
+	} catch (const std::invalid_argument& e) {
+		std::cerr << "Invalid filename format: " << fileName << std::endl;
+		return -1;
 	}
 }
 
@@ -364,28 +394,42 @@ byte8 * CreateArchive(uint32 * saveSize = 0)
 	fs::path current_path = fs::current_path();
 	bool foundAny = false;
 
+	std::vector<fs::directory_entry> sortedEntries;
+
 	for ( const auto& entry : fs::directory_iterator(current_path) ) {
+
+		sortedEntries.push_back( entry );
+	};
+
+	// Hack: directories considered as files too
+	std::sort(sortedEntries.begin(), sortedEntries.end(), [](const fs::path& a, const fs::path& b) {
+
+		return ExtractFileIndex( a ) < ExtractFileIndex( b );
+	});
+
+	for( const auto& directoryEntry : sortedEntries ) {
 
 		foundAny = true;
 
-		auto fileName = entry.path().c_str();
+		auto entryPath = directoryEntry.path();
+		auto entryStem = entryPath.stem().c_str();
 
-		if (strcmp(fileName, ".") == 0)
+		if (strcmp(entryStem, ".") == 0)
 		{
 			continue;
 		}
-		if (strcmp(fileName, "..") == 0)
+		if (strcmp(entryStem, "..") == 0)
 		{
 			continue;
 		}
-		if (strcmp(fileName, "PAC") == 0)
+		if (strcmp(entryStem, "PAC") == 0)
 		{
 			head[0] = 'P';
 			head[1] = 'A';
 			head[2] = 'C';
 			continue;
 		}
-		if (strcmp(fileName, "PNST") == 0)
+		if (strcmp(entryStem, "PNST") == 0)
 		{
 			head[0] = 'P';
 			head[1] = 'N';
@@ -393,9 +437,9 @@ byte8 * CreateArchive(uint32 * saveSize = 0)
 			head[3] = 'T';
 			continue;
 		}
-		if (entry.is_directory()) // @Todo: Add empty check.
+		if (directoryEntry.is_directory()) // @Todo: Add empty check.
 		{
-			ChangeDirectory(fileName);
+			ChangeDirectory(entryPath.c_str());
 
 			byte8 * archive = 0;
 			uint32 archiveSize = 0;
@@ -430,7 +474,7 @@ byte8 * CreateArchive(uint32 * saveSize = 0)
 		byte8 * file = 0;
 		uint32 fileSize = 0;
 
-		file = LoadFile(fileName, &fileSize);
+		file = LoadFile(entryPath.c_str(), &fileSize);
 		fileOff[fileCount] = 0xFFFFFFFF;
 
 		if (file)
@@ -531,7 +575,18 @@ int main(int argc, char ** argv)
 		return 0;
 	}
 
-	if (strcmp(argv[1], "e") == 0)
+	std::vector<std::string> args;
+
+	for(int i = 1; i < argc; i++) {
+
+		args.push_back( std::string( argv[i] ) );
+	}
+
+	auto contains_argument = [ args ](std::string a) { 
+		return std::find(args.begin(), args.end(), a) != args.end();
+	};
+
+	if ( contains_argument( "e" ) )
 	{
 		if (argc < 3)
 		{
@@ -539,10 +594,25 @@ int main(int argc, char ** argv)
 			return 0;
 		}
 
-		char   * fileName          = argv[2];
+		char   * fileName          = nullptr;
 		byte8  * file              = 0;
 		uint32   fileSize          = 0;
 		char     directoryName[64] = {};
+		bool     nonRecursive      = false;
+
+		for(int i = 2; i < argc; i++) {
+
+			if (strcmp(argv[i], "norec") == 0) {
+
+				nonRecursive = true;
+			} else if ( !fileName ) {
+
+				fileName = argv[i];
+			} else {
+
+				printf("Too many arguments.\n");
+			}
+		}
 
 		file = LoadFile(fileName, &fileSize);
 		if (!file)
@@ -553,9 +623,9 @@ int main(int argc, char ** argv)
 
 		memcpy(directoryName, fileName, (strlen(fileName) - 4)); // @Todo: A bit too optimistic. Add length check.
 
-		CheckArchive(file, fileSize, directoryName);
+		CheckArchive(file, fileSize, directoryName, nonRecursive);
 	}
-	else if (strcmp(argv[1], "r") == 0)
+	else if ( contains_argument( "r" ))
 	{
 		if (argc < 4)
 		{
@@ -563,11 +633,31 @@ int main(int argc, char ** argv)
 			return 0;
 		}
 
-		char * directoryName = argv[2];
+		char * directoryName = nullptr;
+		char * fileName = nullptr;
 		byte8 * archive = 0;
 		uint32 archiveSize = 0;
-		char * fileName = argv[3];
 		bool result = false;
+
+		for (int i = 2; i < argc; i++) {
+
+			if (!directoryName) {
+
+				directoryName = argv[i];
+			} else if (!fileName) {
+
+				fileName = argv[i];
+			} else {
+
+				printf("Too many arguments.\n");
+				return 0;
+			}
+		}
+
+		if ( !directoryName || !fileName ) {
+			printf("Invalid argument(s).\n");
+			return 0;
+		}
 
 		if (!ChangeDirectory(directoryName))
 		{

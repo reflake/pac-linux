@@ -35,3 +35,6 @@ clean:
 
 dirs:
 	-mkdir -p $(BUILD_DIR)
+
+install:
+	-cp $(TARGET_BUILD_PATH) /usr/bin/dmcpac
