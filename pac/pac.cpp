@@ -99,6 +99,8 @@ byte8 * Alloc(uint32 size)
 		throw std::runtime_error("Allocation failed");
 	}
 
+	memset(addr, 0, size);
+
 	return addr;
 }
 
