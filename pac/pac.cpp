@@ -156,16 +156,23 @@ bool SignatureMatch(byte8 * addr, const byte8 * signature, uint8 count)
 	return true;
 }
 
-bool SaveFile(const char * fileName, byte8 * addr, uint32 size)
+#define MATCH_SIGNATURE_OF_FILE(sign, size) fileSize >= size && SignatureMatch(addr, reinterpret_cast<const byte8 *>(sign), size)
+
+bool SaveFile(const char * fileName, byte8 * addr, uint32 fileSize)
 {
 	const char* MOD_SIGNATURE = "MOD ";
+	const char* MOT_SIGNATURE = "P\0\0\0MOT\0";
 
 	std::string newFileName(fileName);
 
-	if (size > 4 && SignatureMatch(addr, reinterpret_cast<const byte8 *>(MOD_SIGNATURE), 4))
+	if (MATCH_SIGNATURE_OF_FILE(MOD_SIGNATURE, 4))
 	{
 		// Model file??
 		newFileName.append(".mod");
+	} else if (MATCH_SIGNATURE_OF_FILE(MOT_SIGNATURE, 8))
+	{
+		// Motion (animation) file??
+		newFileName.append(".mot");
 	}
 
 	// TODO: instead of exception return false and print error
@@ -176,7 +183,7 @@ bool SaveFile(const char * fileName, byte8 * addr, uint32 size)
 		throw std::runtime_error("Failed to save. Couldn't create file");
 	}
 
-	file.write(reinterpret_cast<char*>(addr), size);
+	file.write(reinterpret_cast<char*>(addr), fileSize);
 	file.close();
 
 	return true;
