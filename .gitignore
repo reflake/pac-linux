@@ -5,6 +5,6 @@
 /x64
 *.bat
 *.vcxproj.user
-.vscode/settings.json
+.vscode/
 Debug/
 Release/
